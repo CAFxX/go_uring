@@ -132,8 +132,9 @@ func (r *iouring) cloop() {
 	// TODO: batch get CQEs in a single syscall
 	// TODO: move result parsing and dispatching outside of the wait loop, or in a goroutine
 	// TODO: avoid using liburing
+	var cqe *C.struct_io_uring_cqe
 	for {
-		var cqe *C.struct_io_uring_cqe
+		cqe = nil
 		C.io_uring_wait_cqe(&r.ring, &cqe)
 		if cqe == nil {
 			continue
