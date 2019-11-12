@@ -31,3 +31,23 @@ func TestWriteFile(t *testing.T) {
     t.Fatalf("want: %q, got %q", want, got)
   }
 }
+
+func TestAppendFile(t *testing.T) {
+  str := "Hello World!"
+  file := "test/.helloworld.append.txt"
+  f, _ := os.Create(file)
+  written, err := AppendFile(f, []byte(str))
+  if err != nil || written != int64(len(str)) {
+    t.Fatal(err)
+  }
+  written, err = AppendFile(f, []byte(str))
+  if err != nil || written != int64(len(str)) {
+    t.Fatal(err)
+  }
+  f.Close()
+  got, _ := ioutil.ReadFile(file)
+  want := str+str
+  if want != string(got) {
+    t.Fatalf("want: %q, got %q", want, got)
+  }
+}

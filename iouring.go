@@ -24,7 +24,7 @@ type sche struct {
 	buf   []byte
 	pos   int64
 	flags uint
-	cch   chan cche
+	cch   *chan cche
 }
 
 type cche struct {
@@ -43,6 +43,7 @@ type opType int8
 const (
 	opRead opType = iota
 	opWrite
+	opAppend
 	opSync
 )
 
@@ -103,6 +104,15 @@ func (r *iouring) putsv(sv []sche) {
 			*(*C.ulong)(unsafe.Pointer(&sqe.anon0[0])) = C.ulong(s.pos)
 			sqe.addr = C.ulonglong(uintptr(unsafe.Pointer(&iovecs[si])))
 			sqe.len = 1
+		case opAppend:
+			if len(s.buf) > 0 {
+				iovecs[si] = C.struct_iovec{unsafe.Pointer(&s.buf[0]), C.ulong(len(s.buf))}
+			}
+			// C.io_uring_prep_writev(sqe, s.fd, &iovecs[si], 1, 0)
+			sqe.opcode = C.IORING_OP_WRITEV
+			sqe.addr = C.ulonglong(uintptr(unsafe.Pointer(&iovecs[si])))
+			sqe.len = 1
+			*(*C.__kernel_rwf_t)(unsafe.Pointer(&sqe.anon1[0])) = C.RWF_APPEND
 		case opSync:
 			// C.io_uring_prep_fsync(sqe, s.fd, s.flags)
 			sqe.opcode = C.IORING_OP_FSYNC
@@ -112,7 +122,7 @@ func (r *iouring) putsv(sv []sche) {
 			panic("unknown opType")
 		}
 		// C.io_uring_sqe_set_data(sqe, (uintptr)(unsafe.Pointer(&s.cch)))
-		sqe.user_data = C.ulonglong((uintptr)(unsafe.Pointer(&s.cch)))
+		sqe.user_data = C.ulonglong((uintptr)(unsafe.Pointer(s.cch)))
 	}
 	C.io_uring_submit(&r.ring)
 	runtime.KeepAlive(iovecs)
@@ -141,24 +151,23 @@ func (r *iouring) cloop() {
 
 func (r *iouring) submitAndWait(op opType, f *os.File, buf []byte, pos int64, flags uint) (int64, error) {
 	cch := make(chan cche, 1) // TODO: use a pool?
-	r.sch <- sche{op, f.Fd(), buf, pos, flags, cch}
+	r.sch <- sche{op, f.Fd(), buf, pos, flags, &cch}
 	c := <-cch
 	return c.len, c.err
 }
 
-// ReadFile reads from file f into buf starting from position pos.
-// Returns the number of bytes read, or an error.
 func (r *iouring) ReadFile(f *os.File, buf []byte, pos int64) (int64, error) {
 	return r.submitAndWait(opRead, f, buf, pos, 0)
 }
 
-// WriteFile writes the contents of buf in file f starting from offset pos.
-// Returns the number of bytes written, or an error.
 func (r *iouring) WriteFile(f *os.File, buf []byte, pos int64) (int64, error) {
 	return r.submitAndWait(opWrite, f, buf, pos, 0)
 }
 
-// SyncFile performs an fsync with the specified flags on file f.
+func (r *iouring) AppendFile(f *os.File, buf []byte) (int64, error) {
+	return r.submitAndWait(opAppend, f, buf, 0, 0)
+}
+
 func (r *iouring) SyncFile(f *os.File, flags uint) error {
 	_, err := r.submitAndWait(opSync, f, nil, 0, flags)
 	return err
@@ -183,6 +192,13 @@ func ReadFile(f *os.File, buf []byte, pos int64) (int64, error) {
 func WriteFile(f *os.File, buf []byte, pos int64) (int64, error) {
 	once.Do(global.Init)
 	return global.WriteFile(f, buf, pos)
+}
+
+// AppendFile appends the contents of buf to the end of file f.
+// Returns the number of bytes written, or an error.
+func AppendFile(f *os.File, buf []byte) (int64, error) {
+	once.Do(global.Init)
+	return global.AppendFile(f, buf)
 }
 
 // SyncFile performs an fsync with the specified flags on file f.
