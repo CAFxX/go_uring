@@ -135,6 +135,9 @@ func (r *iouring) cloop() {
 	for {
 		var cqe *C.struct_io_uring_cqe
 		C.io_uring_wait_cqe(&r.ring, &cqe)
+		if cqe == nil {
+			continue
+		}
 		var c cche
 		if cqe.res >= 0 {
 			c.len = int64(cqe.res)
