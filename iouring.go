@@ -5,12 +5,12 @@ package iouring
 // #include <liburing.h>
 import "C"
 import (
+	"fmt"
 	"os"
 	"runtime"
 	"sync"
 	"syscall"
 	"unsafe"
-	"fmt"
 )
 
 type iouring struct {
@@ -24,12 +24,7 @@ type sche struct {
 	buf   []byte
 	pos   int64
 	flags uint
-	cch   *chan cche
-}
-
-type cche struct {
-	len int64
-	err error
+	cch   *chan int
 }
 
 const (
@@ -139,25 +134,23 @@ func (r *iouring) cloop() {
 		if cqe == nil {
 			continue
 		}
-		var c cche
-		if cqe.res >= 0 {
-			c.len = int64(cqe.res)
-		} else {
-			c.err = syscall.Errno(-cqe.res)
-		}
 		// user_data := C.io_uring_cqe_get_data(cqe)
 		user_data := uintptr(cqe.user_data)
-		cch := *(*chan cche)(unsafe.Pointer(user_data))
+		res := cqe.res
+		cch := *(*chan int)(unsafe.Pointer(user_data))
 		C.io_uring_cqe_seen(&r.ring, cqe)
-		cch <- c
+		cch <- int(res)
 	}
 }
 
 func (r *iouring) submitAndWait(op opType, f *os.File, buf []byte, pos int64, flags uint) (int64, error) {
-	cch := make(chan cche, 1) // TODO: use a pool?
+	cch := make(chan int, 1) // TODO: use a pool?
 	r.sch <- sche{op, f.Fd(), buf, pos, flags, &cch}
-	c := <-cch
-	return c.len, c.err
+	res := <-cch
+	if res >= 0 {
+		return int64(res), nil
+	}
+	return 0, syscall.Errno(-res)
 }
 
 func (r *iouring) ReadFile(f *os.File, buf []byte, pos int64) (int64, error) {
