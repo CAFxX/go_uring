@@ -144,13 +144,21 @@ func (r *iouring) cloop() {
 }
 
 func (r *iouring) submitAndWait(op opType, f *os.File, buf []byte, pos int64, flags uint) (int64, error) {
-	cch := make(chan int, 1) // TODO: use a pool?
-	r.sch <- sche{op, f.Fd(), buf, pos, flags, &cch}
-	res := <-cch
+	cch := chanPool.Get().(*chan int)
+	r.sch <- sche{op, f.Fd(), buf, pos, flags, cch}
+	res := <-(*cch)
+	chanPool.Put(cch)
 	if res >= 0 {
 		return int64(res), nil
 	}
 	return 0, syscall.Errno(-res)
+}
+
+var chanPool = sync.Pool{
+	New: func() interface{} {
+		ch := make(chan int, 1)
+		return &ch
+	},
 }
 
 func (r *iouring) ReadFile(f *os.File, buf []byte, pos int64) (int64, error) {
